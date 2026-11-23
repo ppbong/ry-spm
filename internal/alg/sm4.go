@@ -17,6 +17,7 @@ type SM4Suite struct{}
 
 func (s *SM4Suite) Name() string { return AlgSM4 }
 func (s *SM4Suite) ID() byte     { return AlgIDSM4 }
+func (s *SM4Suite) KeyLen() int  { return sm4KeySize }
 
 // sm4KeySize is the expected key length for SM4.
 const sm4KeySize = 16

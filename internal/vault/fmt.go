@@ -350,17 +350,63 @@ func DecryptVaultBase(ciphertext []byte, infoKey []byte, suite alg.Suite) (Vault
 	return base, nil
 }
 
-// EncryptVaultItem encrypts a VaultItem and returns the wrapped DEK + ciphertext.
-func EncryptVaultItem(item VaultItem, dataKey []byte, macKey []byte, suite alg.Suite, seq uint16) (VaultBlock, error) {
-	chunkKey, err := alg.DeriveChunkKey(dataKey, seq)
-	if err != nil {
-		return VaultBlock{}, fmt.Errorf("failed to derive chunk key: %w", err)
+// wrapRandomChunkKey generates a random chunkKey and wraps it with the suite AEAD
+// using a wrapKey derived from dataKey + seq. Output: nonce || ciphertext+tag.
+func wrapRandomChunkKey(dataKey []byte, suite alg.Suite, seq uint16) (chunkKey []byte, wrappedDek []byte, err error) {
+	chunkKey = make([]byte, alg.DefaultKeyLen)
+	if _, err = rand.Read(chunkKey); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate random chunk key: %w", err)
 	}
 
-	// Wrap chunkKey using macKey (simple XOR wrap for this key size)
-	wrappedDek := make([]byte, len(chunkKey))
-	for i := range chunkKey {
-		wrappedDek[i] = chunkKey[i] ^ macKey[i%len(macKey)]
+	wrapKey, err := alg.DeriveSubKey(dataKey, fmt.Sprintf("dek-wrap-%d", seq), uint32(suite.KeyLen()))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive DEK wrapping key: %w", err)
+	}
+
+	nonce, err := suite.GenerateNonce()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate DEK wrap nonce: %w", err)
+	}
+
+	aad := []byte(fmt.Sprintf("ry-dek-wrap-%d", seq))
+	ct, err := suite.EncryptGCM(wrapKey, nonce, chunkKey, aad)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to wrap DEK: %w", err)
+	}
+
+	wrappedDek = make([]byte, 0, alg.DefaultNonceLen+len(ct))
+	wrappedDek = append(wrappedDek, nonce...)
+	wrappedDek = append(wrappedDek, ct...)
+	return chunkKey, wrappedDek, nil
+}
+
+// unwrapChunkKey recovers a random chunkKey wrapped by the suite AEAD.
+// Layout: nonce(DefaultNonceLen) || ciphertext+tag.
+func unwrapChunkKey(dataKey []byte, suite alg.Suite, seq uint16, wrappedDek []byte) ([]byte, error) {
+	if len(wrappedDek) <= alg.DefaultNonceLen {
+		return nil, fmt.Errorf("wrapped DEK too short (%d bytes)", len(wrappedDek))
+	}
+	nonce := wrappedDek[:alg.DefaultNonceLen]
+	ct := wrappedDek[alg.DefaultNonceLen:]
+
+	wrapKey, err := alg.DeriveSubKey(dataKey, fmt.Sprintf("dek-wrap-%d", seq), uint32(suite.KeyLen()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive DEK wrapping key: %w", err)
+	}
+
+	aad := []byte(fmt.Sprintf("ry-dek-wrap-%d", seq))
+	chunkKey, err := suite.DecryptGCM(wrapKey, nonce, ct, aad)
+	if err != nil {
+		return nil, fmt.Errorf("DEK wrap verification failed (wrong data key or tampered vault): %w", err)
+	}
+	return chunkKey, nil
+}
+
+// EncryptVaultItem encrypts a VaultItem and returns the wrapped DEK + ciphertext.
+func EncryptVaultItem(item VaultItem, dataKey []byte, macKey []byte, suite alg.Suite, seq uint16) (VaultBlock, error) {
+	chunkKey, wrappedDek, err := wrapRandomChunkKey(dataKey, suite, seq)
+	if err != nil {
+		return VaultBlock{}, err
 	}
 
 	plaintext, err := json.Marshal(item)
@@ -397,28 +443,16 @@ func EncryptVaultItem(item VaultItem, dataKey []byte, macKey []byte, suite alg.S
 
 // DecryptVaultItem decrypts a VaultBlock back into VaultItem.
 func DecryptVaultItem(block VaultBlock, macKey []byte, dataKey []byte, suite alg.Suite, expectedSeq uint16) (VaultItem, error) {
-	// Re-derive chunk key and verify block MAC
-	chunkKey, err := alg.DeriveChunkKey(dataKey, block.Seq)
-	if err != nil {
-		return VaultItem{}, fmt.Errorf("failed to derive chunk key: %w", err)
-	}
-
-	// Verify block MAC
+	// Verify block MAC first — cheapest integrity check, catches tampering early.
 	dataForMAC := append(util.Uint16ToBytes(block.Seq), block.VaultItemCipher...)
 	if !suite.VerifyMAC(macKey, dataForMAC, block.Mac) {
 		return VaultItem{}, fmt.Errorf("block MAC verification failed for seq %d", block.Seq)
 	}
 
-	// Unwrap DEK (verify consistency)
-	if len(block.WrappedDek) != len(chunkKey) {
-		return VaultItem{}, fmt.Errorf("wrapped DEK size mismatch")
-	}
-	unwrapped := make([]byte, len(chunkKey))
-	for i := range chunkKey {
-		unwrapped[i] = block.WrappedDek[i] ^ macKey[i%len(macKey)]
-	}
-	if !hmac.Equal(unwrapped, chunkKey) {
-		return VaultItem{}, fmt.Errorf("wrapped DEK does not match derived chunk key")
+	// Recover chunkKey from wrappedDek via suite AEAD unwrap.
+	chunkKey, err := unwrapChunkKey(dataKey, suite, block.Seq, block.WrappedDek)
+	if err != nil {
+		return VaultItem{}, err
 	}
 
 	// Decrypt the ciphertext
@@ -440,7 +474,6 @@ func DecryptVaultItem(block VaultBlock, macKey []byte, dataKey []byte, suite alg
 	if expectedSeq > 0 && block.Seq != expectedSeq {
 		return item, nil
 	}
-	_ = rand.Reader
 	return item, nil
 }
 

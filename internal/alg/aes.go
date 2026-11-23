@@ -12,8 +12,9 @@ import (
 // AESSuite implements Suite using AES-256-GCM.
 type AESSuite struct{}
 
-func (a *AESSuite) Name() string { return AlgAES }
-func (a *AESSuite) ID() byte     { return AlgIDAES }
+func (a *AESSuite) Name() string    { return AlgAES }
+func (a *AESSuite) ID() byte        { return AlgIDAES }
+func (a *AESSuite) KeyLen() int     { return 32 }
 
 // EncryptGCM encrypts plaintext using AES-256-GCM.
 func (a *AESSuite) EncryptGCM(key, nonce, plaintext, aad []byte) ([]byte, error) {

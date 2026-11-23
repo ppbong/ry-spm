@@ -32,8 +32,12 @@ type Suite interface {
 	// ID returns the single-byte algorithm identifier.
 	ID() byte
 
+	// KeyLen returns the symmetric key length in bytes (32 for AES-256, 16 for SM4).
+	// Useful for deriving keys that will be passed to EncryptGCM/DecryptGCM.
+	KeyLen() int
+
 	// EncryptGCM encrypts plaintext using GCM with the given key and AAD.
-	// Returns nonce || ciphertext || tag.
+	// Returns ciphertext || tag (nonce must be supplied separately by caller).
 	EncryptGCM(key, nonce, plaintext, aad []byte) ([]byte, error)
 	// DecryptGCM decrypts ciphertext produced by EncryptGCM.
 	DecryptGCM(key, nonce, ciphertext, aad []byte) ([]byte, error)
