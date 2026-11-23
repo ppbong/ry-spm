@@ -2,43 +2,82 @@ package vault
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/ppbong/ry-spm/internal/alg"
 )
 
 func TestRoundtrip(t *testing.T) {
 	pass := "master1234"
+	category := "email"
+	name := "testroundtrip"
 
-	err := Initialize("AES", "email", "testroundtrip", pass, "PBKDF2")
+	err := Initialize("AES", category, name, pass, "PBKDF2")
 	if err != nil {
-		t.Fatalf("Init: %v", err)
+		t.Fatalf("Initialize: %v", err)
 	}
 
-	path := "testroundtrip.sv"
-	defer os.Remove(path)
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
 
 	h, err := loadVault(path, pass)
 	if err != nil {
-		t.Fatalf("loadVault master: %v", err)
+		t.Fatalf("loadVault after init: %v", err)
 	}
-
-	t.Logf("PASS: loadVault with master passphrase")
+	if h.Header.AlgId != alg.AlgIDAES {
+		t.Errorf("AlgId = 0x%02x, want 0x%02x", h.Header.AlgId, alg.AlgIDAES)
+	}
+	if h.Base.Category != category {
+		t.Errorf("Category = %q, want %q", h.Base.Category, category)
+	}
 
 	h.Header.LastUsedAt = "2025-01-01 00:00:00"
 	h.Header.UpdatedAt = "2025-01-01 00:00:00"
-	err = saveVault(h)
-	if err != nil {
+	if err := saveVault(h); err != nil {
 		t.Fatalf("saveVault: %v", err)
 	}
-	t.Log("PASS: saveVault")
 
-	h2, err := loadVault(path, "")
+	// Reload with correct passphrase — must round-trip the header changes.
+	h2, err := loadVault(path, pass)
 	if err != nil {
 		t.Fatalf("loadVault after save: %v", err)
 	}
+	if h2.Header.LastUsedAt != h.Header.LastUsedAt {
+		t.Errorf("LastUsedAt = %q, want %q", h2.Header.LastUsedAt, h.Header.LastUsedAt)
+	}
+	if h2.Header.UpdatedAt != h.Header.UpdatedAt {
+		t.Errorf("UpdatedAt = %q, want %q", h2.Header.UpdatedAt, h.Header.UpdatedAt)
+	}
 
-	t.Logf("last used at %s updated at %s", h2.Header.LastUsedAt, h2.Header.UpdatedAt)
-	t.Log("PASS: loadVault without master passphrase")
+	// Atomic write should not leave stray temp files.
+	matches, _ := filepath.Glob(name + ".sv.tmp-*")
+	if len(matches) > 0 {
+		t.Errorf("temp files left behind: %v", matches)
+	}
+}
 
-	os.Remove(path)
-	t.Log("=== ALL ROUND-TRIP TESTS PASSED ===")
+func TestRoundtripSM4(t *testing.T) {
+	pass := "sm4-test-pass"
+	name := "sm4roundtrip"
+
+	if err := Initialize("SM4", "server", name, pass, "Argon2id"); err != nil {
+		t.Fatalf("Initialize SM4: %v", err)
+	}
+
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
+
+	h, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("loadVault SM4: %v", err)
+	}
+	if h.Header.AlgId != 0x02 { // AlgIDSM4
+		t.Errorf("AlgId = 0x%02x, want 0x02", h.Header.AlgId)
+	}
+
+	// Corrupt passphrase must fail.
+	if _, err := loadVault(path, "wrong"); err == nil {
+		t.Error("expected error with wrong passphrase")
+	}
 }

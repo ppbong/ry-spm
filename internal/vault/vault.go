@@ -46,7 +46,7 @@ func loadVault(vaultFile string, passphrase string) (*VaultHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive root key: %w", err)
 	}
-	masterDataKey, err := alg.DeriveDataKey(masterRootKey)
+	masterDataKey, err := alg.DeriveSubKey(masterRootKey, "data-key", uint32(suite.KeyLen()))
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func loadVault(vaultFile string, passphrase string) (*VaultHandle, error) {
 			BodyBlocks: blocks,
 		}
 		// Decrypt Base using infoKey derived from rootKey.
-		infoKey, _ := alg.DeriveInfoKey(masterRootKey)
+		infoKey, _ := alg.DeriveSubKey(masterRootKey, "info-key", uint32(suite.KeyLen()))
 		handle.InfoKey = infoKey
 		if base, err := DecryptVaultBase(header.BaseCipher, infoKey, suite); err == nil {
 			handle.Base = base
@@ -163,7 +163,7 @@ func Initialize(algName, category, vaultName, passphrase, kdfName string) error 
 	if err != nil {
 		return err
 	}
-	infoKey, err := alg.DeriveInfoKey(rootKey)
+	infoKey, err := alg.DeriveSubKey(rootKey, "info-key", uint32(suite.KeyLen()))
 	if err != nil {
 		return err
 	}
