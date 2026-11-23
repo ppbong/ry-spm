@@ -11,6 +11,15 @@ import (
 )
 
 // KDFParams holds the parameters for a key derivation function.
+//
+// For Argon2id (OWASP 2024 recommended):
+//   M = memory in MB     (≥ 128)
+//   T = time factor      (≥ 3)
+//   P = parallelism      (2 on modern CPUs)
+//
+// For PBKDF2-HMAC-SHA256:
+//   M = iteration count  (≥ 600_000 per OWASP 2024)
+//   T, P are ignored.
 type KDFParams struct {
 	Name string
 	ID   byte
@@ -20,14 +29,14 @@ type KDFParams struct {
 	Salt []byte
 }
 
-// DefaultKDFParams returns the default Argon2id parameters.
+// DefaultKDFParams returns the default Argon2id parameters (128 MB / 3 / 2).
 func DefaultKDFParams() KDFParams {
 	salt := make([]byte, DefaultSaltLen)
 	_, _ = rand.Read(salt)
 	return KDFParams{
 		Name: KDFArgon2id,
 		ID:   KDFIDArgon2id,
-		M:    64,
+		M:    128,
 		T:    3,
 		P:    2,
 		Salt: salt,
@@ -43,23 +52,13 @@ func NewKDFParams(name string) (KDFParams, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
 	case "", "argon2id", "argon2":
-		return KDFParams{Name: KDFArgon2id, ID: KDFIDArgon2id, M: 64, T: 3, P: 2, Salt: salt}, nil
+		// 128 MB memory is the OWASP-recommended floor for 2024 hardware
+		return KDFParams{Name: KDFArgon2id, ID: KDFIDArgon2id, M: 128, T: 3, P: 2, Salt: salt}, nil
 	case "pbkdf2":
-		return KDFParams{Name: KDFPBKDF2, ID: KDFIDPBKDF2, M: 32, T: 100, P: 1, Salt: salt}, nil
+		// 600_000 iterations is OWASP 2024 recommendation for PBKDF2-HMAC-SHA256
+		return KDFParams{Name: KDFPBKDF2, ID: KDFIDPBKDF2, M: 600_000, T: 0, P: 0, Salt: salt}, nil
 	default:
 		return KDFParams{}, fmt.Errorf("unsupported KDF: %s", name)
-	}
-}
-
-// NewKDFParamsByID creates KDFParams by single-byte identifier with a fresh salt.
-func NewKDFParamsByID(id byte) (KDFParams, error) {
-	switch id {
-	case KDFIDArgon2id:
-		return NewKDFParams(KDFArgon2id)
-	case KDFIDPBKDF2:
-		return NewKDFParams(KDFPBKDF2)
-	default:
-		return KDFParams{}, fmt.Errorf("unsupported KDF ID: 0x%02x", id)
 	}
 }
 
@@ -70,13 +69,11 @@ func (p KDFParams) Derive(passphrase string, keyLen uint32) ([]byte, error) {
 	}
 	switch p.ID {
 	case KDFIDArgon2id:
-		return argon2.IDKey([]byte(passphrase), p.Salt, uint32(p.M), uint32(p.T), uint8(p.P), keyLen), nil
+		// M is stored in MB, argon2 library expects KiB
+		return argon2.IDKey([]byte(passphrase), p.Salt, uint32(p.M)*1024, uint32(p.T), uint8(p.P), keyLen), nil
 	case KDFIDPBKDF2:
-		iters := uint32(p.M)*100 + uint32(p.T)
-		if iters < 1000 {
-			iters = 1000
-		}
-		return pbkdf2.Key([]byte(passphrase), p.Salt, int(iters), int(keyLen), sha256.New), nil
+		// M stores iteration count directly
+		return pbkdf2.Key([]byte(passphrase), p.Salt, int(p.M), int(keyLen), sha256.New), nil
 	default:
 		return nil, fmt.Errorf("unsupported KDF ID: 0x%02x", p.ID)
 	}
@@ -87,9 +84,11 @@ func DeriveRootKey(passphrase string, params KDFParams) ([]byte, error) {
 	return params.Derive(passphrase, DefaultKeyLen)
 }
 
-// DeriveInfoKey derives an info key from secondary passphrase.
-func DeriveInfoKey(passphrase string, params KDFParams) ([]byte, error) {
-	return params.Derive(passphrase, DefaultKeyLen)
+// DeriveInfoKey derives the info-key from the root key via domain-separated sub-key derivation.
+// The info-key protects vault metadata (category, labels) — it must not share the same
+// derivation path as dataKey or macKey.
+func DeriveInfoKey(rootKey []byte) ([]byte, error) {
+	return DeriveSubKey(rootKey, "info-key", DefaultKeyLen)
 }
 
 // DeriveSubKey derives a sub-key from parent key using HKDF-like construction.

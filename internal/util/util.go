@@ -93,6 +93,44 @@ func WriteFile(path string, content []byte) error {
 	return os.WriteFile(path, content, 0o600)
 }
 
+// WriteFileAtomic writes content to path atomically: it first writes to a
+// temp file in the same directory, then renames it over the target. This
+// prevents vault corruption if the process is killed mid-write.
+func WriteFileAtomic(path string, content []byte) error {
+	dir := filepath.Dir(path)
+	if err := EnsureDirectory(dir); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
 // ReadFile reads and returns the content of the file at path.
 func ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)

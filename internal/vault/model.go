@@ -100,3 +100,21 @@ type VaultHandle struct {
 	BaseDecrypted bool
 	BodyBlocks    []VaultBlock
 }
+
+// Clear zeroes out all key material held by the handle.
+// Call this after the handle is no longer needed.
+func (h *VaultHandle) Clear() {
+	zero := func(b []byte) {
+		for i := range b {
+			b[i] = 0
+		}
+	}
+	zero(h.RootKey)
+	zero(h.InfoKey)
+	zero(h.DataKey)
+	zero(h.MacKey)
+	h.RootKey = nil
+	h.InfoKey = nil
+	h.DataKey = nil
+	h.MacKey = nil
+}

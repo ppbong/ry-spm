@@ -72,8 +72,8 @@ func loadVault(vaultFile string, passphrase string) (*VaultHandle, error) {
 			Header:     header,
 			BodyBlocks: blocks,
 		}
-		// Decrypt Base using rootKey (infoKey derived from master)
-		infoKey, _ := alg.DeriveInfoKey(passphrase, kdfParams)
+		// Decrypt Base using infoKey derived from rootKey.
+		infoKey, _ := alg.DeriveInfoKey(masterRootKey)
 		handle.InfoKey = infoKey
 		if base, err := DecryptVaultBase(header.BaseCipher, infoKey, suite); err == nil {
 			handle.Base = base
@@ -123,7 +123,7 @@ func saveVault(h *VaultHandle) error {
 		return err
 	}
 
-	if err := util.WriteFile(h.FilePath, data); err != nil {
+	if err := util.WriteFileAtomic(h.FilePath, data); err != nil {
 		return err
 	}
 	return nil
@@ -163,7 +163,7 @@ func Initialize(algName, category, vaultName, passphrase, kdfName string) error 
 	if err != nil {
 		return err
 	}
-	infoKey, err := alg.DeriveInfoKey(passphrase, kdfParams)
+	infoKey, err := alg.DeriveInfoKey(rootKey)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func Initialize(algName, category, vaultName, passphrase, kdfName string) error 
 		return fmt.Errorf("vault file %s already exists", vaultPath)
 	}
 
-	if err := util.WriteFile(vaultPath, data); err != nil {
+	if err := util.WriteFileAtomic(vaultPath, data); err != nil {
 		return fmt.Errorf("failed to write vault file: %w", err)
 	}
 
@@ -240,6 +240,7 @@ func MockVaultItem(vaultFile, filename, passphrase string) error {
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	if !handle.BaseDecrypted {
 		return fmt.Errorf("cannot access vault info with this passphrase")
@@ -270,6 +271,7 @@ func SaveVaultItem(vaultFile, filename, passphrase string) error {
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	jsonData, err := util.ReadFile(filename)
 	if err != nil {
@@ -330,8 +332,9 @@ func DeleteVaultItem(vaultFile string, labels []string, passphrase string, pop b
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
-	blocks, items, labelMap, err := decryptAllBlocks(handle)
+	blocks, _, labelMap, err := decryptAllBlocks(handle)
 	if err != nil {
 		return err
 	}
@@ -376,10 +379,6 @@ func DeleteVaultItem(vaultFile string, labels []string, passphrase string, pop b
 	fmt.Printf("Deleted %d item(s) from vault.\n", len(removedItems))
 
 	if pop && len(removedItems) > 0 {
-		for _, item := range removedItems {
-			_ = items
-			_ = item
-		}
 		return writeItemsAsLabelFiles(removedItems, handle.Base.Category+"-", true, false)
 	}
 	return nil
@@ -391,6 +390,7 @@ func ExtractVaultItem(vaultFile string, labels []string, passphrase string) erro
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	blocks, _, labelMap, err := decryptAllBlocks(handle)
 	if err != nil {
@@ -426,6 +426,7 @@ func ShowVaultInfo(vaultFile, passphrase string) error {
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	fmt.Println("=== Vault Info ===")
 	fmt.Printf("File       : %s\n", handle.FilePath)
@@ -464,6 +465,7 @@ func ShowVaultItemDetail(vaultFile string, labels []string, passphrase string) e
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	blocks, _, labelMap, err := decryptAllBlocks(handle)
 	if err != nil {
@@ -514,6 +516,7 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 	if err != nil {
 		return err
 	}
+	defer handle.Clear()
 
 	jsonData, err := util.ReadFile(filename)
 	if err != nil {
@@ -601,7 +604,7 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 	if err := saveVault(handle); err != nil {
 		return err
 	}
-	fmt.Printf("Updated %d item(s) in vault.\n", len(blocks))
+	fmt.Printf("Updated %d item(s) in vault.\n", len(updates))
 	return nil
 }
 
@@ -651,6 +654,7 @@ func TouchLastUsed(vaultFile, passphrase string) error {
 	if err != nil {
 		return err
 	}
+	defer h.Clear()
 	h.Header.LastUsedAt = util.NowString()
 	return saveVault(h)
 }
@@ -661,6 +665,7 @@ func CheckBackupDue(vaultFile, passphrase string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer h.Clear()
 	if h.Header.LastUsedAt == "" {
 		return false, nil
 	}
