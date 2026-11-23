@@ -72,8 +72,41 @@ func TestRoundtripSM4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadVault SM4: %v", err)
 	}
-	if h.Header.AlgId != 0x02 { // AlgIDSM4
-		t.Errorf("AlgId = 0x%02x, want 0x02", h.Header.AlgId)
+	if h.Header.AlgId != alg.AlgIDSM4 {
+		t.Errorf("AlgId = 0x%02x, want 0x%02x", h.Header.AlgId, alg.AlgIDSM4)
+	}
+
+	// Encrypt + save a real item through EncryptVaultItem / saveVault — this
+	// is where chunkKey gets used as EncryptGCM key (must match suite.KeyLen).
+	item := VaultItem{
+		Label:    "db-password",
+		Account:  "admin",
+		Password: "s3cr3t-👻-中文",
+		Category: "server",
+	}
+	block, err := EncryptVaultItem(item, h.DataKey, h.MacKey, h.AlgSuite, 1)
+	if err != nil {
+		t.Fatalf("EncryptVaultItem (SM4): %v", err)
+	}
+	h.BodyBlocks = append(h.BodyBlocks, block)
+	if err := saveVault(h); err != nil {
+		t.Fatalf("saveVault with SM4 item: %v", err)
+	}
+
+	// Reload and decrypt the item back.
+	h2, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("reload after item save: %v", err)
+	}
+	if len(h2.BodyBlocks) != 1 {
+		t.Fatalf("want 1 block, got %d", len(h2.BodyBlocks))
+	}
+	got, err := DecryptVaultItem(h2.BodyBlocks[0], h2.MacKey, h2.DataKey, h2.AlgSuite, 1)
+	if err != nil {
+		t.Fatalf("DecryptVaultItem (SM4): %v", err)
+	}
+	if got.Password != item.Password {
+		t.Errorf("Password roundtrip mismatch: got %q, want %q", got.Password, item.Password)
 	}
 
 	// Corrupt passphrase must fail.

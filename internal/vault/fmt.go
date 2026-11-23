@@ -353,7 +353,7 @@ func DecryptVaultBase(ciphertext []byte, infoKey []byte, suite alg.Suite) (Vault
 // wrapRandomChunkKey generates a random chunkKey and wraps it with the suite AEAD
 // using a wrapKey derived from dataKey + seq. Output: nonce || ciphertext+tag.
 func wrapRandomChunkKey(dataKey []byte, suite alg.Suite, seq uint16) (chunkKey []byte, wrappedDek []byte, err error) {
-	chunkKey = make([]byte, alg.DefaultKeyLen)
+	chunkKey = make([]byte, suite.KeyLen())
 	if _, err = rand.Read(chunkKey); err != nil {
 		return nil, nil, fmt.Errorf("failed to generate random chunk key: %w", err)
 	}
