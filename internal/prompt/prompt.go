@@ -40,6 +40,9 @@ func ReadLine(prompt string) (string, error) {
 // supplied via command-line flags, environment variables, stdin redirection
 // ("echo pass | spm ...") or here-documents, all of which leave traces in
 // shell history, process listings, or filesystem snapshots.
+//
+// The input is returned verbatim — no trimming or normalization — so the
+// passphrase bytes fed to the KDF match what the user typed on every client.
 func ReadPassword(prompt string) (string, error) {
 	if !isTerminal() {
 		return "", errNoTerminal
@@ -52,7 +55,7 @@ func ReadPassword(prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read password: %w", err)
 	}
-	return strings.TrimSpace(string(pwd)), nil
+	return string(pwd), nil
 }
 
 // ReadPasswordConfirm reads a password and asks for confirmation.
@@ -64,7 +67,7 @@ func ReadPasswordConfirm(prompt, confirmPrompt string, minLen int) (string, erro
 			return "", err
 		}
 		if minLen > 0 && len(pwd) < minLen {
-			fmt.Printf("  Password must be at least %d characters.\n", minLen)
+			fmt.Printf("  Password must be at least %d bytes.\n", minLen)
 			continue
 		}
 		confirm, err := ReadPassword(confirmPrompt)

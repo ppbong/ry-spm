@@ -2,6 +2,7 @@ package alg
 
 import (
 	"fmt"
+	"strings"
 )
 
 const (
@@ -51,12 +52,13 @@ type Suite interface {
 	GenerateNonce() ([]byte, error)
 }
 
-// NewSuite creates a Suite by algorithm name.
+// NewSuite creates a Suite by algorithm name (case-insensitive, surrounding
+// whitespace ignored).
 func NewSuite(name string) (Suite, error) {
-	switch name {
-	case AlgAES:
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "aes":
 		return &AESSuite{}, nil
-	case AlgSM4:
+	case "sm4":
 		return &SM4Suite{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %s", name)

@@ -27,7 +27,7 @@ You will be prompted for:
   - Algorithm   : AES (default) or SM4
   - Category    : logical group name (max 32 chars, [A-Za-z0-9_-])
   - Vault name  : file name without extension (default = category, max 64 chars)
-  - Passphrase  : used to derive root key -> data keys + mac keys (max 64 chars)`,
+  - Passphrase  : used to derive root key -> data keys + mac keys (8..64 bytes, used verbatim)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		algName := initAlg
 		if algName == "" {
@@ -65,7 +65,7 @@ You will be prompted for:
 		passphrase, err := prompt.ReadPasswordConfirm(
 			"Master passphrase: ",
 			"Confirm master passphrase: ",
-			4,
+			util.MinPassphraseLen,
 		)
 		if err != nil {
 			return err

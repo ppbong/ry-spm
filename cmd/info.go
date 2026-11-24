@@ -20,8 +20,8 @@ var infoCmd = &cobra.Command{
 	Short: "Show vault metadata (algorithm, category, labels, etc.)",
 	Long: `Display metadata about a vault file.
 
-If no passphrase or incorrect passphrase is given, only public metadata is shown.
-With a correct passphrase, decrypted info including category and labels is also shown.`,
+The master passphrase is required. A wrong passphrase is rejected as an error,
+so decrypted info (category and labels) is shown only when it is correct.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if infoVault == "" {
 			return fmt.Errorf("--vault is required")

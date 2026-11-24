@@ -74,10 +74,15 @@ func ValidateIdentifierAlphaStart(s string, maxLen int) bool {
 	return re.MatchString(s)
 }
 
-// ValidatePassphrase checks within maxLen.
-func ValidatePassphrase(s string, maxLen int) bool {
-	if s == "" || len(s) > maxLen {
-		return false
-	}
-	return true
+// Master passphrase length policy, in UTF-8 bytes. The passphrase is used
+// verbatim: callers must not trim or otherwise normalize it before deriving keys.
+const (
+	MinPassphraseLen = 8
+	MaxPassphraseLen = 64
+)
+
+// ValidatePassphrase checks the master passphrase length in bytes.
+func ValidatePassphrase(s string) bool {
+	n := len(s)
+	return n >= MinPassphraseLen && n <= MaxPassphraseLen
 }

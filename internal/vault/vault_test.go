@@ -92,6 +92,9 @@ func TestRoundtripSM4(t *testing.T) {
 		t.Fatalf("EncryptVaultItem (SM4): %v", err)
 	}
 	h.BodyBlocks = append(h.BodyBlocks, block)
+	h.Base.Labels = append(h.Base.Labels, item.Label)
+	h.Header.Count = uint32(len(h.BodyBlocks))
+	h.Header.NextSeq = uint32(block.Seq) + 1
 	if err := saveVault(h); err != nil {
 		t.Fatalf("saveVault with SM4 item: %v", err)
 	}
@@ -392,5 +395,136 @@ func TestSelectiveOperations(t *testing.T) {
 
 	if err := ExtractVaultItem(path, []string{"a"}, pass); err == nil {
 		t.Error("expected 'no matching labels' after deleting a")
+	}
+}
+
+func TestCipherLenLimit(t *testing.T) {
+	pass := "cipherlen-pass"
+	name := "cipherlen"
+	if err := Initialize("AES", "email", name, pass, "PBKDF2"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
+
+	// A single item whose encrypted size exceeds the u16 CipherLen field.
+	huge := strings.Repeat("x", 70000)
+	body := fmt.Sprintf(`{"label":"huge","category":"email","password":"p","notes":["%s"]}`, huge)
+	in := filepath.Join(t.TempDir(), "huge.json")
+	if err := os.WriteFile(in, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVaultItem(path, in, pass); err == nil {
+		t.Fatal("expected oversized item to be rejected, got nil")
+	}
+
+	h, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("vault must stay readable: %v", err)
+	}
+	defer h.Clear()
+	if h.Header.Count != 0 || len(h.BodyBlocks) != 0 {
+		t.Errorf("vault changed after rejected add: count=%d blocks=%d", h.Header.Count, len(h.BodyBlocks))
+	}
+}
+
+func TestPassphraseTooShort(t *testing.T) {
+	name := "shortpass"
+	err := Initialize("AES", "email", name, "short", "PBKDF2")
+	if err == nil {
+		t.Fatal("expected short passphrase to be rejected")
+	}
+	if _, statErr := os.Stat(name + ".sv"); statErr == nil {
+		os.Remove(name + ".sv")
+		t.Fatal("vault file must not be created when validation fails")
+	}
+}
+
+func TestDecryptVaultItemSeqMismatch(t *testing.T) {
+	suite, err := alg.NewSuite("AES")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataKey := make([]byte, suite.KeyLen())
+	macKey := make([]byte, alg.DefaultMacLen)
+
+	item := VaultItem{Label: "x", Category: "email", Password: "p"}
+	block, err := EncryptVaultItem(item, dataKey, macKey, suite, 7)
+	if err != nil {
+		t.Fatalf("EncryptVaultItem: %v", err)
+	}
+
+	if _, err := DecryptVaultItem(block, macKey, dataKey, suite, 8); err == nil {
+		t.Fatal("expected sequence mismatch error")
+	}
+	if _, err := DecryptVaultItem(block, macKey, dataKey, suite, 7); err != nil {
+		t.Fatalf("decrypt with correct seq: %v", err)
+	}
+}
+
+func TestHeaderCountMismatchRejected(t *testing.T) {
+	pass := "count-mismatch-pass"
+	name := "countmismatch"
+	if err := Initialize("AES", "email", name, pass, "PBKDF2"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
+
+	in := filepath.Join(t.TempDir(), "one.json")
+	if err := os.WriteFile(in, []byte(`{"label":"one","category":"email","password":"p"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveVaultItem(path, in, pass); err != nil {
+		t.Fatalf("SaveVaultItem: %v", err)
+	}
+
+	// Tamper with Count and re-sign the file with the correct macKey, so the
+	// only remaining inconsistency is Count vs. block count.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr, blocks, err := DeserializeVault(data)
+	if err != nil {
+		t.Fatalf("DeserializeVault: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	hdr.Count = uint32(len(blocks)) + 1
+	hdr.MacLen, hdr.Mac = 0, nil
+	headerBytes, err := SerializeHeader(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := alg.DeriveRootKey(pass, alg.KDFParams{
+		ID: hdr.KdfId, M: hdr.KdfParamM, T: hdr.KdfParamT, P: hdr.KdfParamP, Salt: hdr.Salt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	macKey, err := alg.DeriveMacKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac, err := ComputeVaultMAC(macKey, headerBytes, blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr.Mac, hdr.MacLen = mac, byte(len(mac))
+
+	out, err := SerializeVault(hdr, blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadVault(path, pass); err == nil || !strings.Contains(err.Error(), "count") {
+		t.Fatalf("expected count mismatch error, got %v", err)
 	}
 }

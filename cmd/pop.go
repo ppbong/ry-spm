@@ -19,7 +19,7 @@ var (
 var popCmd = &cobra.Command{
 	Use:   "pop",
 	Short: "Extract entries from the vault as JSON files (without deleting)",
-	Long: `Export one or more entries from the vault as <label>.json files
+	Long: `Export one or more entries from the vault as <category>-<label>.json files
 in the current directory, without removing them from the vault.
 
 Labels are comma-separated (e.g. "label1,label2,label3").`,

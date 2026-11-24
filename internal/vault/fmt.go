@@ -453,6 +453,13 @@ func EncryptVaultItem(item VaultItem, dataKey []byte, macKey []byte, suite alg.S
 	fullCipher = append(fullCipher, nonce...)
 	fullCipher = append(fullCipher, ciphertext...)
 
+	// CipherLen is a u16; reject instead of silently truncating and corrupting
+	// the block.
+	if len(fullCipher) > 0xffff {
+		return VaultBlock{}, fmt.Errorf("vault item too large: ciphertext is %d bytes, max %d",
+			len(fullCipher), 0xffff)
+	}
+
 	block := VaultBlock{
 		Seq:             seq,
 		WrappedDekLen:   byte(len(wrappedDek)),
@@ -470,7 +477,13 @@ func EncryptVaultItem(item VaultItem, dataKey []byte, macKey []byte, suite alg.S
 }
 
 // DecryptVaultItem decrypts a VaultBlock back into VaultItem.
+// expectedSeq, when non-zero, must equal block.Seq; a mismatch is treated as
+// an error so callers can detect index corruption.
 func DecryptVaultItem(block VaultBlock, macKey []byte, dataKey []byte, suite alg.Suite, expectedSeq uint16) (VaultItem, error) {
+	if expectedSeq != 0 && block.Seq != expectedSeq {
+		return VaultItem{}, fmt.Errorf("block sequence mismatch: block has seq %d, expected %d", block.Seq, expectedSeq)
+	}
+
 	// Verify block MAC first — cheapest integrity check, catches tampering early.
 	dataForMAC := append(util.Uint16ToBytes(block.Seq), block.VaultItemCipher...)
 	if !suite.VerifyMAC(macKey, dataForMAC, block.Mac) {
@@ -497,10 +510,6 @@ func DecryptVaultItem(block VaultBlock, macKey []byte, dataKey []byte, suite alg
 	var item VaultItem
 	if err := json.Unmarshal(plaintext, &item); err != nil {
 		return VaultItem{}, fmt.Errorf("failed to unmarshal VaultItem: %w", err)
-	}
-
-	if expectedSeq > 0 && block.Seq != expectedSeq {
-		return item, nil
 	}
 	return item, nil
 }

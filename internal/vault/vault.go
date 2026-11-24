@@ -94,6 +94,12 @@ func loadVault(vaultFile string, passphrase string) (*VaultHandle, error) {
 	headerBytes, _ := SerializeHeader(headerForMAC)
 	expectedMAC, err := ComputeVaultMAC(masterMacKey, headerBytes, blocks)
 	if err == nil && hmac.Equal(expectedMAC, header.Mac) {
+		// The count is authenticated by the file MAC, so a mismatch means the
+		// header and body disagree — reject rather than silently using either.
+		if header.Count != uint32(len(blocks)) {
+			return nil, fmt.Errorf("vault is inconsistent: header count is %d but body has %d block(s)",
+				header.Count, len(blocks))
+		}
 		handle := &VaultHandle{
 			FilePath:   vaultFile,
 			AlgSuite:   suite,
@@ -228,8 +234,9 @@ func saveVault(h *VaultHandle) error {
 // Initialize creates a new .sv vault file in the current directory.
 // passphrase are required.
 func Initialize(algName, category, vaultName, passphrase, kdfName string) error {
-	if !util.ValidatePassphrase(passphrase, 64) {
-		return fmt.Errorf("master passphrase cannot be empty and be <= 64 chars")
+	if !util.ValidatePassphrase(passphrase) {
+		return fmt.Errorf("master passphrase must be %d..%d bytes",
+			util.MinPassphraseLen, util.MaxPassphraseLen)
 	}
 
 	if !util.ValidateIdentifier(category, 32) {
@@ -403,15 +410,18 @@ func SaveVaultItem(vaultFile, filename, passphrase string) error {
 		}
 	}
 
+	seen := make(map[string]struct{}, len(handle.Base.Labels)+len(items))
+	for _, existing := range handle.Base.Labels {
+		seen[existing] = struct{}{}
+	}
+
 	for _, m := range items {
 		item := ToVaultItem(m, handle.Base.Category)
 
-		// Check duplicate label
-		for _, existing := range handle.Base.Labels {
-			if existing == item.Label {
-				return fmt.Errorf("label %q already exists in vault", item.Label)
-			}
+		if _, dup := seen[item.Label]; dup {
+			return fmt.Errorf("label %q already exists in vault", item.Label)
 		}
+		seen[item.Label] = struct{}{}
 
 		seq := uint16(handle.Header.NextSeq)
 		block, err := EncryptVaultItem(item, handle.DataKey, handle.MacKey, handle.AlgSuite, seq)

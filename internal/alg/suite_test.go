@@ -220,6 +220,12 @@ func TestNewSuiteByNameAndID(t *testing.T) {
 		}
 	}
 
+	for _, alt := range []string{"aes", " AES ", "sm4", " SM4 "} {
+		if _, err := NewSuite(alt); err != nil {
+			t.Errorf("NewSuite(%q) should be accepted: %v", alt, err)
+		}
+	}
+
 	if _, err := NewSuite("unknown"); err == nil {
 		t.Error("expected error for unknown suite name")
 	}

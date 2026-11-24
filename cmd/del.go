@@ -21,7 +21,7 @@ var delCmd = &cobra.Command{
 	Use:   "del",
 	Short: "Delete entries from the vault by label",
 	Long: `Delete one or more entries from the specified vault.
-Use --pop to also export the deleted entries as <label>.json files.
+Use --pop to also export the deleted entries as <category>-<label>.json files.
 
 Labels are comma-separated (e.g. "label1,label2,label3").`,
 	RunE: func(cmd *cobra.Command, args []string) error {

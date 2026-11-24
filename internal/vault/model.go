@@ -88,7 +88,6 @@ type VaultFile struct {
 // VaultHandle holds the loaded vault state with derived keys and file content.
 type VaultHandle struct {
 	FilePath      string
-	SingletonPass string
 	AlgSuite      alg.Suite
 	KdfParams     alg.KDFParams
 	RootKey       []byte
