@@ -82,7 +82,7 @@ func ReadPasswordConfirm(prompt, confirmPrompt string, minLen int) (string, erro
 // SelectAlgorithm prompts the user to choose between AES and SM4.
 // Returns the chosen algorithm name.
 func SelectAlgorithm(defaultAlg string) (string, error) {
-	choices := "1) AES (AES-256-GCM)  2) SM4 (SM4-CTR+HMAC)\nChoose algorithm [1,2] (default 1): "
+	choices := "1) AES (AES-256-GCM)  2) SM4 (SM4-GCM)\nChoose algorithm [1,2] (default 1): "
 	for {
 		input, err := ReadLine(choices)
 		if err != nil {

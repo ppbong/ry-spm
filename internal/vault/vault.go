@@ -85,6 +85,70 @@ func loadVault(vaultFile string, passphrase string) (*VaultHandle, error) {
 	return nil, fmt.Errorf("passphrase is incorrect or vault is corrupted")
 }
 
+// LoadVaultLite reads a vault file, verifies structure + MAC, and prepares
+// the handle with only Header + Base metadata populated — BodyBlocks are nil.
+// Use this for commands that only need vault-level info (e.g. `spm info`)
+// where full item deserialization is wasted.
+func LoadVaultLite(vaultFile, passphrase string) (*VaultHandle, error) {
+	data, err := os.ReadFile(vaultFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read vault file %s: %w", vaultFile, err)
+	}
+
+	header, bodyBytes, err := DeserializeVaultHeaderOnly(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse vault file: %w", err)
+	}
+
+	suite, err := alg.NewSuiteByID(header.AlgId)
+	if err != nil {
+		return nil, err
+	}
+
+	kdfParams := alg.KDFParams{
+		Name: "",
+		ID:   header.KdfId,
+		M:    header.KdfParamM,
+		T:    header.KdfParamT,
+		P:    header.KdfParamP,
+		Salt: header.Salt,
+	}
+
+	masterRootKey, err := alg.DeriveRootKey(passphrase, kdfParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive root key: %w", err)
+	}
+	masterMacKey, err := alg.DeriveMacKey(masterRootKey)
+	if err != nil {
+		return nil, err
+	}
+
+	headerForMAC := header
+	headerForMAC.MacLen = 0
+	headerForMAC.Mac = nil
+	headerBytes, _ := SerializeHeader(headerForMAC)
+	expectedMAC := ComputeVaultMACRaw(masterMacKey, headerBytes, bodyBytes)
+	if hmac.Equal(expectedMAC, header.Mac) {
+		infoKey, _ := alg.DeriveSubKey(masterRootKey, "info-key", uint32(suite.KeyLen()))
+		handle := &VaultHandle{
+			FilePath:  vaultFile,
+			AlgSuite:  suite,
+			KdfParams:  kdfParams,
+			RootKey:   masterRootKey,
+			MacKey:    masterMacKey,
+			InfoKey:   infoKey,
+			Header:    header,
+			// DataKey intentionally nil — Lite mode never decrypts items.
+		}
+		if base, err := DecryptVaultBase(header.BaseCipher, infoKey, suite); err == nil {
+			handle.Base = base
+			handle.BaseDecrypted = true
+		}
+		return handle, nil
+	}
+	return nil, fmt.Errorf("passphrase is incorrect or vault is corrupted")
+}
+
 // saveVault writes the vault back to disk, recomputing MAC and timestamps.
 func saveVault(h *VaultHandle) error {
 	// Re-encrypt Base
@@ -292,6 +356,9 @@ func SaveVaultItem(vaultFile, filename, passphrase string) error {
 	}
 
 	for _, m := range items {
+		if m.Category != handle.Base.Category {
+			return fmt.Errorf("each item must belong to the vault category %s", handle.Base.Category)
+		}
 		if strings.TrimSpace(m.Label) == "" {
 			return fmt.Errorf("each item must have a non-empty label")
 		}
@@ -422,7 +489,7 @@ func ExtractVaultItem(vaultFile string, labels []string, passphrase string) erro
 
 // ShowVaultInfo prints vault information.
 func ShowVaultInfo(vaultFile, passphrase string) error {
-	handle, err := loadVault(vaultFile, passphrase)
+	handle, err := LoadVaultLite(vaultFile, passphrase)
 	if err != nil {
 		return err
 	}
@@ -539,6 +606,9 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 
 	updateMap := make(map[string]MockItem)
 	for _, u := range updates {
+		if u.Category != handle.Base.Category {
+			return fmt.Errorf("each update must belong to the vault category %s", handle.Base.Category)
+		}
 		if strings.TrimSpace(u.Label) == "" {
 			return fmt.Errorf("each update must have a non-empty label")
 		}

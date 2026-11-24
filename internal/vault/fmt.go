@@ -242,6 +242,19 @@ func ComputeVaultMAC(macKey []byte, headerBytes []byte, blocks []VaultBlock) ([]
 	return mac.Sum(nil), nil
 }
 
+// ComputeVaultMACRaw computes the vault MAC directly from raw body bytes,
+// avoiding block-by-block deserialization. Used by LoadVaultLite when only
+// header + base are needed.
+func ComputeVaultMACRaw(macKey, headerBytes, bodyBytes []byte) []byte {
+	mac := hmac.New(sha256.New, macKey)
+	mac.Write([]byte(Magic))
+	mac.Write([]byte(Version))
+	mac.Write(headerBytes)
+	mac.Write(bodyBytes)
+	mac.Write([]byte(Trailer))
+	return mac.Sum(nil)
+}
+
 // SerializeVault serializes the entire vault file to bytes.
 func SerializeVault(h VaultHeader, blocks []VaultBlock) ([]byte, error) {
 	headerBytes, err := SerializeHeader(h)
@@ -266,20 +279,33 @@ func SerializeVault(h VaultHeader, blocks []VaultBlock) ([]byte, error) {
 
 // DeserializeVault parses the entire vault file from bytes.
 func DeserializeVault(data []byte) (VaultHeader, []VaultBlock, error) {
+	header, _, blocks, err := deserializeVaultInner(data, true)
+	return header, blocks, err
+}
+
+// DeserializeVaultHeaderOnly parses magic/version/header from the file,
+// returning the raw body byte slice instead of parsed blocks. This is
+// used by LoadVaultLite when only header + base metadata are needed.
+func DeserializeVaultHeaderOnly(data []byte) (VaultHeader, []byte, error) {
+	header, bodyBytes, _, err := deserializeVaultInner(data, false)
+	return header, bodyBytes, err
+}
+
+func deserializeVaultInner(data []byte, parseBlocks bool) (VaultHeader, []byte, []VaultBlock, error) {
 	minLen := len(Magic) + len(Version) + len(Trailer)
 	if len(data) < minLen {
-		return VaultHeader{}, nil, fmt.Errorf("file too short")
+		return VaultHeader{}, nil, nil, fmt.Errorf("file too short")
 	}
 
 	if string(data[:len(Magic)]) != Magic {
-		return VaultHeader{}, nil, fmt.Errorf("invalid magic header: expected %q, got %q", Magic, string(data[:len(Magic)]))
+		return VaultHeader{}, nil, nil, fmt.Errorf("invalid magic header: expected %q, got %q", Magic, string(data[:len(Magic)]))
 	}
 	version := string(data[len(Magic) : len(Magic)+len(Version)])
 	if version != Version {
-		return VaultHeader{}, nil, fmt.Errorf("unsupported version: %s", version)
+		return VaultHeader{}, nil, nil, fmt.Errorf("unsupported version: %s", version)
 	}
 	if string(data[len(data)-len(Trailer):]) != Trailer {
-		return VaultHeader{}, nil, fmt.Errorf("invalid trailer")
+		return VaultHeader{}, nil, nil, fmt.Errorf("invalid trailer")
 	}
 
 	headerOffset := len(Magic) + len(Version)
@@ -287,28 +313,30 @@ func DeserializeVault(data []byte) (VaultHeader, []VaultBlock, error) {
 
 	header, err := DeserializeHeader(data[headerOffset:trailerOffset])
 	if err != nil {
-		return VaultHeader{}, nil, fmt.Errorf("failed to deserialize header: %w", err)
+		return VaultHeader{}, nil, nil, fmt.Errorf("failed to deserialize header: %w", err)
 	}
 
-	// Re-serialize header to compute body start
 	headerBytes, err := SerializeHeader(header)
 	if err != nil {
-		return VaultHeader{}, nil, fmt.Errorf("failed to re-serialize header: %w", err)
+		return VaultHeader{}, nil, nil, fmt.Errorf("failed to re-serialize header: %w", err)
 	}
 	bodyOffset := headerOffset + len(headerBytes)
+	bodyBytes := data[bodyOffset:trailerOffset]
 
 	var blocks []VaultBlock
-	offset := bodyOffset
-	for offset < trailerOffset {
-		block, newOffset, err := DeserializeBlock(data, offset)
-		if err != nil {
-			return VaultHeader{}, nil, fmt.Errorf("failed to deserialize block: %w", err)
+	if parseBlocks {
+		var offset int
+		var block VaultBlock
+		for offset < len(bodyBytes) {
+			block, offset, err = DeserializeBlock(bodyBytes, offset)
+			if err != nil {
+				return VaultHeader{}, nil, nil, fmt.Errorf("failed to deserialize block: %w", err)
+			}
+			blocks = append(blocks, block)
 		}
-		blocks = append(blocks, block)
-		offset = newOffset
 	}
 
-	return header, blocks, nil
+	return header, bodyBytes, blocks, nil
 }
 
 // EncryptVaultBase encrypts VaultBase using the given info key and suite.
