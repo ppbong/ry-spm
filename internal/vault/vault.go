@@ -13,6 +13,9 @@ import (
 
 const (
 	MaxRecordCount = 10000
+	// MaxSeq caps the block sequence number below the uint16 limit (65535)
+	// so that a wrapped NextSeq can never reuse an existing Seq.
+	MaxSeq = 50000
 )
 
 // loadVault reads a vault file, verifies structure and MAC, and prepares the handle.
@@ -353,6 +356,13 @@ func SaveVaultItem(vaultFile, filename, passphrase string) error {
 
 	if len(items)+int(handle.Header.Count) > MaxRecordCount {
 		return fmt.Errorf("input file contains %d items, which exceeds the maximum record count of %d", len(items), MaxRecordCount)
+	}
+	if len(items) > 0 {
+		lastSeq := uint64(handle.Header.NextSeq) + uint64(len(items)) - 1
+		if lastSeq > MaxSeq {
+			return fmt.Errorf("sequence number limit exceeded: requested %d item(s) starting at seq %d, but max seq is %d",
+				len(items), handle.Header.NextSeq, MaxSeq)
+		}
 	}
 
 	for _, m := range items {
