@@ -42,7 +42,7 @@ type VaultBase struct {
 
 // vault header
 type VaultHeader struct {
-	BaseLen    uint8
+	BaseLen    uint32
 	BaseCipher []byte
 	AlgId      byte
 	KdfId      byte

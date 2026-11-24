@@ -64,10 +64,50 @@ func NewKDFParams(name string) (KDFParams, error) {
 	}
 }
 
+// Parameter bounds accepted when reading KDF settings from a vault header.
+// They are deliberately generous compared with the defaults but stop crafted
+// headers from panicking argon2 or exhausting memory/CPU before MAC checks.
+const (
+	MinArgon2MemoryMiB = 8
+	MaxArgon2MemoryMiB = 1024
+	MaxArgon2Time      = 10
+	MaxArgon2Parallel  = 16
+	MinPBKDF2Iter      = 10_000
+	MaxPBKDF2Iter      = 10_000_000
+)
+
+// validate checks that the parameters are within supported bounds.
+func (p KDFParams) validate() error {
+	if len(p.Salt) == 0 {
+		return fmt.Errorf("salt is empty")
+	}
+	switch p.ID {
+	case KDFIDArgon2id:
+		if p.M < MinArgon2MemoryMiB || p.M > MaxArgon2MemoryMiB {
+			return fmt.Errorf("unsupported argon2id memory cost: %d MiB (allowed %d..%d)",
+				p.M, MinArgon2MemoryMiB, MaxArgon2MemoryMiB)
+		}
+		if p.T < 1 || p.T > MaxArgon2Time {
+			return fmt.Errorf("unsupported argon2id time cost: %d (allowed 1..%d)", p.T, MaxArgon2Time)
+		}
+		if p.P < 1 || p.P > MaxArgon2Parallel {
+			return fmt.Errorf("unsupported argon2id parallelism: %d (allowed 1..%d)", p.P, MaxArgon2Parallel)
+		}
+	case KDFIDPBKDF2:
+		if p.M < MinPBKDF2Iter || p.M > MaxPBKDF2Iter {
+			return fmt.Errorf("unsupported PBKDF2 iteration count: %d (allowed %d..%d)",
+				p.M, MinPBKDF2Iter, MaxPBKDF2Iter)
+		}
+	default:
+		return fmt.Errorf("unsupported KDF ID: 0x%02x", p.ID)
+	}
+	return nil
+}
+
 // Derive derives a key of given length from passphrase using this KDF.
 func (p KDFParams) Derive(passphrase string, keyLen uint32) ([]byte, error) {
-	if len(p.Salt) == 0 {
-		return nil, fmt.Errorf("salt is empty")
+	if err := p.validate(); err != nil {
+		return nil, err
 	}
 	switch p.ID {
 	case KDFIDArgon2id:

@@ -2,6 +2,7 @@ package vault
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,111 @@ func TestLabelIndexInconsistent(t *testing.T) {
 	}
 	if _, err := labelIndex(h); err == nil {
 		t.Fatal("expected error on duplicate label")
+	}
+}
+
+func TestLargeBaseMetadata(t *testing.T) {
+	pass := "baselen-pass"
+	name := "baselen"
+	if err := Initialize("AES", "email", name, pass, "PBKDF2"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
+
+	// 40 short labels push BaseCipher past the old 255-byte u8 limit; the
+	// uint32 BaseLen field must represent and preserve the full length.
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := 0; i < 40; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"label":"label-%02d","category":"email","password":"p"}`, i)
+	}
+	sb.WriteString("]")
+
+	in := filepath.Join(t.TempDir(), "many.json")
+	if err := os.WriteFile(in, []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVaultItem(path, in, pass); err != nil {
+		t.Fatalf("SaveVaultItem: %v", err)
+	}
+
+	h, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer h.Clear()
+	if h.Header.Count != 40 || len(h.BodyBlocks) != 40 {
+		t.Fatalf("count=%d blocks=%d, want 40/40", h.Header.Count, len(h.BodyBlocks))
+	}
+	if len(h.Base.Labels) != 40 {
+		t.Fatalf("labels=%d, want 40", len(h.Base.Labels))
+	}
+	if len(h.Header.BaseCipher) <= 255 {
+		t.Fatalf("BaseCipher=%d bytes, test requires >255 to exercise the widened field", len(h.Header.BaseCipher))
+	}
+	if h.Header.BaseLen != uint32(len(h.Header.BaseCipher)) {
+		t.Fatalf("BaseLen=%d, want %d", h.Header.BaseLen, len(h.Header.BaseCipher))
+	}
+}
+
+func TestUnsafeLabelsRejected(t *testing.T) {
+	pass := "label-pass"
+	name := "labels"
+	if err := Initialize("AES", "email", name, pass, "PBKDF2"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	path := name + ".sv"
+	t.Cleanup(func() { os.Remove(path) })
+
+	cases := []struct{ name, json string }{
+		{"traversal", `{"label":"../evil","category":"email","password":"p"}`},
+		{"slash", `{"label":"a/b","category":"email","password":"p"}`},
+		{"backslash", `{"label":"a\\\\b","category":"email","password":"p"}`},
+		{"dotdot", `{"label":"..","category":"email","password":"p"}`},
+		{"tenant", `{"label":".","category":"email","password":"p"}`},
+		{"comma", `{"label":"a,b","category":"email","password":"p"}`},
+		{"space", `{"label":"a b","category":"email","password":"p"}`},
+		{"tab", `{"label":"a\tb","category":"email","password":"p"}`},
+		{"ideographic-space", `{"label":"a\u3000b","category":"email","password":"p"}`},
+		{"control", `{"label":"bad\u0001name","category":"email","password":"p"}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := filepath.Join(t.TempDir(), "bad.json")
+			if err := os.WriteFile(in, []byte(c.json), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := SaveVaultItem(path, in, pass); err == nil {
+				t.Fatalf("expected label %s to be rejected", c.name)
+			}
+		})
+	}
+
+	h, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer h.Clear()
+	if h.Header.Count != 0 {
+		t.Errorf("count = %d, want 0 (no partial writes)", h.Header.Count)
+	}
+}
+
+func TestExportRefusesUnsafeFileName(t *testing.T) {
+	items := []VaultItem{{Label: "../escape", Category: "email"}}
+	if err := writeItemsAsLabelFiles(items, "email-", false, false); err == nil {
+		t.Fatal("expected unsafe label to be rejected on export")
+	}
+
+	// A crafted category prefix must be caught by the file-name check too.
+	items = []VaultItem{{Label: "ok", Category: "email"}}
+	if err := writeItemsAsLabelFiles(items, "../", false, false); err == nil {
+		t.Fatal("expected path in prefix to be rejected on export")
 	}
 }
 

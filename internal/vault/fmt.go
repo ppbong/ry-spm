@@ -42,7 +42,7 @@ func decodeString(data []byte, offset int) (string, int, error) {
 // SerializeHeader converts VaultHeader to bytes.
 func SerializeHeader(h VaultHeader) ([]byte, error) {
 	var buf []byte
-	buf = append(buf, h.BaseLen)
+	buf = append(buf, util.Uint32ToBytes(h.BaseLen)...)
 	buf = append(buf, h.BaseCipher...)
 	buf = append(buf, h.AlgId)
 	buf = append(buf, h.KdfId)
@@ -68,13 +68,13 @@ func DeserializeHeader(data []byte) (VaultHeader, error) {
 	h := VaultHeader{}
 	offset := 0
 
-	if offset+1 > len(data) {
+	if offset+4 > len(data) {
 		return h, fmt.Errorf("cannot read BaseLen")
 	}
-	h.BaseLen = data[offset]
-	offset++
+	h.BaseLen = binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
 
-	if offset+int(h.BaseLen) > len(data) {
+	if uint64(h.BaseLen) > uint64(len(data)-offset) {
 		return h, fmt.Errorf("cannot read BaseCipher")
 	}
 	h.BaseCipher = append([]byte{}, data[offset:offset+int(h.BaseLen)]...)

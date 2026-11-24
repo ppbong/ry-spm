@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/ppbong/ry-spm/internal/alg"
 	"github.com/ppbong/ry-spm/internal/util"
@@ -18,6 +20,32 @@ const (
 	// so that a wrapped NextSeq can never reuse an existing Seq.
 	MaxSeq = 50000
 )
+
+// validateLabel rejects label values that are unsafe to use as a file name
+// when exporting, and that would corrupt the label index if allowed.
+func validateLabel(label string) error {
+	if label == "" {
+		return fmt.Errorf("label must be non-empty")
+	}
+	if label == "." || label == ".." {
+		return fmt.Errorf("invalid label %q", label)
+	}
+	if strings.ContainsAny(label, `/\`) {
+		return fmt.Errorf("invalid label %q: must not contain path separators", label)
+	}
+	if strings.ContainsRune(label, ',') {
+		return fmt.Errorf("invalid label %q: must not contain commas", label)
+	}
+	for _, r := range label {
+		if unicode.IsSpace(r) {
+			return fmt.Errorf("invalid label %q: must not contain whitespace", label)
+		}
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid label %q: must not contain control characters", label)
+		}
+	}
+	return nil
+}
 
 // loadVault reads a vault file, verifies structure and MAC, and prepares the handle.
 // passphrase is tried as master first, then secondary.
@@ -162,7 +190,7 @@ func saveVault(h *VaultHandle) error {
 			return err
 		}
 		h.Header.BaseCipher = cipher
-		h.Header.BaseLen = byte(len(cipher))
+		h.Header.BaseLen = uint32(len(cipher))
 	}
 
 	// Update timestamps
@@ -251,7 +279,7 @@ func Initialize(algName, category, vaultName, passphrase, kdfName string) error 
 
 	now := util.NowString()
 	header := VaultHeader{
-		BaseLen:    byte(len(cipher)),
+		BaseLen:    uint32(len(cipher)),
 		BaseCipher: cipher,
 		AlgId:      suite.ID(),
 		KdfId:      kdfParams.ID,
@@ -370,8 +398,8 @@ func SaveVaultItem(vaultFile, filename, passphrase string) error {
 		if m.Category != handle.Base.Category {
 			return fmt.Errorf("each item must belong to the vault category %s", handle.Base.Category)
 		}
-		if strings.TrimSpace(m.Label) == "" {
-			return fmt.Errorf("each item must have a non-empty label")
+		if err := validateLabel(strings.TrimSpace(m.Label)); err != nil {
+			return err
 		}
 	}
 
@@ -738,6 +766,9 @@ func decryptBlockAt(h *VaultHandle, i int, wantLabel string) (VaultItem, error) 
 // writeItemsAsLabelFiles writes each item to a <label>.json file.
 func writeItemsAsLabelFiles(items []VaultItem, prefix string, verbose bool, isMock bool) error {
 	for _, item := range items {
+		if err := validateLabel(item.Label); err != nil {
+			return err
+		}
 		var out any
 		if isMock {
 			out = FromVaultItemToMock(item)
@@ -750,6 +781,11 @@ func writeItemsAsLabelFiles(items []VaultItem, prefix string, verbose bool, isMo
 			return err
 		}
 		name := util.JSONPath(prefix + item.Label)
+		// Defence in depth: never write outside the working directory even if
+		// the category or label was crafted in an older vault file.
+		if filepath.Base(name) != name {
+			return fmt.Errorf("refusing to export item %q: unsafe file name %q", item.Label, name)
+		}
 		if err := util.WriteFile(name, data); err != nil {
 			return err
 		}
