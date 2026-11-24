@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/ppbong/ry-spm/internal/alg"
@@ -411,36 +412,41 @@ func DeleteVaultItem(vaultFile string, labels []string, passphrase string, pop b
 	}
 	defer handle.Clear()
 
-	blocks, _, labelMap, err := decryptAllBlocks(handle)
-	if err != nil {
+	if _, err := labelIndex(handle); err != nil {
 		return err
 	}
 
-	labelSet := make(map[string]bool)
+	labelSet := make(map[string]bool, len(labels))
 	for _, l := range labels {
 		labelSet[l] = true
 	}
 
 	var remainingBlocks []VaultBlock
 	var remainingLabels []string
-	var removedItems []VaultItem
+	var removedBlocks []VaultBlock
 
-	for _, b := range blocks {
-		item, ok := labelMap[b.Seq]
-		if !ok {
-			remainingBlocks = append(remainingBlocks, b)
+	for i, l := range handle.Base.Labels {
+		if labelSet[l] {
+			removedBlocks = append(removedBlocks, handle.BodyBlocks[i])
 			continue
 		}
-		if labelSet[item.Label] {
-			removedItems = append(removedItems, item)
-		} else {
-			remainingBlocks = append(remainingBlocks, b)
-		}
+		remainingLabels = append(remainingLabels, l)
+		remainingBlocks = append(remainingBlocks, handle.BodyBlocks[i])
 	}
 
-	for _, l := range handle.Base.Labels {
-		if !labelSet[l] {
-			remainingLabels = append(remainingLabels, l)
+	// Decrypt only the blocks being exported, before mutating the vault, so a
+	// corrupted block aborts the whole operation instead of leaving it deleted.
+	var removedItems []VaultItem
+	if pop {
+		for _, b := range removedBlocks {
+			item, err := DecryptVaultItem(b, handle.MacKey, handle.DataKey, handle.AlgSuite, b.Seq)
+			if err != nil {
+				return fmt.Errorf("failed to decrypt deleted block seq %d: %w", b.Seq, err)
+			}
+			if !labelSet[item.Label] {
+				return fmt.Errorf("vault is inconsistent: block seq %d holds unexpected label %q", b.Seq, item.Label)
+			}
+			removedItems = append(removedItems, item)
 		}
 	}
 
@@ -453,7 +459,7 @@ func DeleteVaultItem(vaultFile string, labels []string, passphrase string, pop b
 		return err
 	}
 
-	fmt.Printf("Deleted %d item(s) from vault.\n", len(removedItems))
+	fmt.Printf("Deleted %d item(s) from vault.\n", len(removedBlocks))
 
 	if pop && len(removedItems) > 0 {
 		return writeItemsAsLabelFiles(removedItems, handle.Base.Category+"-", true, false)
@@ -469,25 +475,25 @@ func ExtractVaultItem(vaultFile string, labels []string, passphrase string) erro
 	}
 	defer handle.Clear()
 
-	blocks, _, labelMap, err := decryptAllBlocks(handle)
-	if err != nil {
+	if _, err := labelIndex(handle); err != nil {
 		return err
 	}
 
-	labelSet := make(map[string]bool)
+	labelSet := make(map[string]bool, len(labels))
 	for _, l := range labels {
 		labelSet[l] = true
 	}
 
 	var matched []VaultItem
-	for _, b := range blocks {
-		item, ok := labelMap[b.Seq]
-		if !ok {
+	for i, l := range handle.Base.Labels {
+		if !labelSet[l] {
 			continue
 		}
-		if labelSet[item.Label] {
-			matched = append(matched, item)
+		item, err := decryptBlockAt(handle, i, l)
+		if err != nil {
+			return err
 		}
+		matched = append(matched, item)
 	}
 
 	if len(matched) == 0 {
@@ -544,24 +550,23 @@ func ShowVaultItemDetail(vaultFile string, labels []string, passphrase string) e
 	}
 	defer handle.Clear()
 
-	blocks, _, labelMap, err := decryptAllBlocks(handle)
-	if err != nil {
+	if _, err := labelIndex(handle); err != nil {
 		return err
 	}
 
-	labelSet := make(map[string]bool)
+	labelSet := make(map[string]bool, len(labels))
 	for _, l := range labels {
 		labelSet[l] = true
 	}
 
 	foundAny := false
-	for _, b := range blocks {
-		item, ok := labelMap[b.Seq]
-		if !ok {
+	for i, l := range handle.Base.Labels {
+		if len(labelSet) > 0 && !labelSet[l] {
 			continue
 		}
-		if len(labelSet) > 0 && !labelSet[item.Label] {
-			continue
+		item, err := decryptBlockAt(handle, i, l)
+		if err != nil {
+			return err
 		}
 		foundAny = true
 		fmt.Println("------------------------------")
@@ -579,6 +584,9 @@ func ShowVaultItemDetail(vaultFile string, labels []string, passphrase string) e
 		if len(item.HistoryPasswords) > 0 {
 			fmt.Printf("HistoryPasswords: %v\n", item.HistoryPasswords)
 		}
+		// Drop the plaintext reference as soon as it has been printed so only
+		// one item is live at a time.
+		item = VaultItem{}
 	}
 
 	if !foundAny {
@@ -609,7 +617,7 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 		updates = []MockItem{single}
 	}
 
-	blocks, _, labelMap, err := decryptAllBlocks(handle)
+	idx, err := labelIndex(handle)
 	if err != nil {
 		return err
 	}
@@ -625,17 +633,28 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 		updateMap[u.Label] = u
 	}
 
-	var newBlocks []VaultBlock
-	for _, b := range blocks {
-		item, ok := labelMap[b.Seq]
-		if !ok {
-			newBlocks = append(newBlocks, b)
+	var missing []string
+	for l := range updateMap {
+		if _, ok := idx[l]; !ok {
+			missing = append(missing, l)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("labels not found in vault for update: %v", missing)
+	}
+
+	newBlocks := make([]VaultBlock, 0, len(handle.BodyBlocks))
+	for i, l := range handle.Base.Labels {
+		u, wantUpdate := updateMap[l]
+		if !wantUpdate {
+			newBlocks = append(newBlocks, handle.BodyBlocks[i])
 			continue
 		}
-		u, wantUpdate := updateMap[item.Label]
-		if !wantUpdate {
-			newBlocks = append(newBlocks, b)
-			continue
+
+		item, err := decryptBlockAt(handle, i, l)
+		if err != nil {
+			return err
 		}
 
 		oldPassword := item.Password
@@ -662,20 +681,12 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 			}
 		}
 
-		newBlock, err := EncryptVaultItem(newItem, handle.DataKey, handle.MacKey, handle.AlgSuite, b.Seq)
+		newBlock, err := EncryptVaultItem(newItem, handle.DataKey, handle.MacKey, handle.AlgSuite, handle.BodyBlocks[i].Seq)
 		if err != nil {
 			return err
 		}
 		newBlocks = append(newBlocks, newBlock)
-		delete(updateMap, item.Label)
-	}
-
-	if len(updateMap) > 0 {
-		missing := make([]string, 0, len(updateMap))
-		for l := range updateMap {
-			missing = append(missing, l)
-		}
-		return fmt.Errorf("labels not found in vault for update: %v", missing)
+		delete(updateMap, l)
 	}
 
 	handle.BodyBlocks = newBlocks
@@ -688,19 +699,40 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 	return nil
 }
 
-// decryptAllBlocks decrypts every block in the vault and returns them.
-func decryptAllBlocks(h *VaultHandle) ([]VaultBlock, []VaultItem, map[uint16]VaultItem, error) {
-	labelMap := make(map[uint16]VaultItem)
-	var items []VaultItem
-	for _, b := range h.BodyBlocks {
-		item, err := DecryptVaultItem(b, h.MacKey, h.DataKey, h.AlgSuite, b.Seq)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to decrypt block seq %d: %w", b.Seq, err)
-		}
-		labelMap[b.Seq] = item
-		items = append(items, item)
+// labelIndex validates the "Base.Labels[i] corresponds to BodyBlocks[i]"
+// invariant and returns a label-to-index map. Selective operations rely on
+// this invariant to locate a block without decrypting every record.
+func labelIndex(h *VaultHandle) (map[string]int, error) {
+	if len(h.Base.Labels) != len(h.BodyBlocks) {
+		return nil, fmt.Errorf("vault is inconsistent: %d labels but %d blocks", len(h.Base.Labels), len(h.BodyBlocks))
 	}
-	return h.BodyBlocks, items, labelMap, nil
+	idx := make(map[string]int, len(h.Base.Labels))
+	for i, l := range h.Base.Labels {
+		if _, dup := idx[l]; dup {
+			return nil, fmt.Errorf("vault is inconsistent: duplicate label %q", l)
+		}
+		idx[l] = i
+	}
+	return idx, nil
+}
+
+// decryptBlockAt decrypts BodyBlocks[i] and verifies that it really holds the
+// expected label, so a broken index can never cause an update/delete of the
+// wrong record.
+func decryptBlockAt(h *VaultHandle, i int, wantLabel string) (VaultItem, error) {
+	if i < 0 || i >= len(h.BodyBlocks) {
+		return VaultItem{}, fmt.Errorf("block index %d out of range", i)
+	}
+	b := h.BodyBlocks[i]
+	item, err := DecryptVaultItem(b, h.MacKey, h.DataKey, h.AlgSuite, b.Seq)
+	if err != nil {
+		return VaultItem{}, fmt.Errorf("failed to decrypt block seq %d: %w", b.Seq, err)
+	}
+	if item.Label != wantLabel {
+		return VaultItem{}, fmt.Errorf("vault is inconsistent: block %d (seq %d) holds label %q, expected %q",
+			i, b.Seq, item.Label, wantLabel)
+	}
+	return item, nil
 }
 
 // writeItemsAsLabelFiles writes each item to a <label>.json file.

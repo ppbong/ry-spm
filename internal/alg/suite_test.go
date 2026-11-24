@@ -31,10 +31,10 @@ func TestSuiteMetadata(t *testing.T) {
 // correctly recovered by DecryptGCM with the same key/nonce/aad.
 func TestEncryptDecryptRoundtrip(t *testing.T) {
 	plaintexts := [][]byte{
-		nil,                              // empty
-		[]byte("hello, world"),           // short
-		make([]byte, 1024),               // 1 KB
-		[]byte("中文 / ê / \x00\xff"),       // unicode + binary
+		nil,                         // empty
+		[]byte("hello, world"),      // short
+		make([]byte, 1024),          // 1 KB
+		[]byte("中文 / ê / \x00\xff"), // unicode + binary
 	}
 	aads := [][]byte{nil, []byte("aad-123"), []byte("")}
 

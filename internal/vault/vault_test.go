@@ -1,8 +1,10 @@
 package vault
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ppbong/ry-spm/internal/alg"
@@ -173,5 +175,116 @@ func TestSeqLimit(t *testing.T) {
 	// Cap reached — further adds must fail rather than wrap around.
 	if err := SaveVaultItem(path, one, pass); err == nil {
 		t.Fatal("expected seq limit error after reaching MaxSeq")
+	}
+}
+
+func TestLabelIndexInconsistent(t *testing.T) {
+	h := &VaultHandle{
+		Base:       VaultBase{Labels: []string{"a", "b"}},
+		BodyBlocks: []VaultBlock{{Seq: 1}},
+	}
+	if _, err := labelIndex(h); err == nil {
+		t.Fatal("expected error when label count != block count")
+	}
+
+	h = &VaultHandle{
+		Base:       VaultBase{Labels: []string{"a", "a"}},
+		BodyBlocks: []VaultBlock{{Seq: 1}, {Seq: 2}},
+	}
+	if _, err := labelIndex(h); err == nil {
+		t.Fatal("expected error on duplicate label")
+	}
+}
+
+func TestSelectiveOperations(t *testing.T) {
+	pass := "selective-pass"
+	name := "selective"
+	if err := Initialize("AES", "email", name, pass, "PBKDF2"); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	path := name + ".sv"
+	t.Cleanup(func() {
+		os.Remove(path)
+		for _, l := range []string{"a", "b", "c"} {
+			os.Remove("email-" + l + ".json")
+		}
+	})
+
+	writeTemp := func(name, body string) string {
+		p := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	initial := `[{"label":"a","category":"email","password":"p1"},
+	             {"label":"b","category":"email","password":"p2"},
+	             {"label":"c","category":"email","password":"p3"}]`
+	if err := SaveVaultItem(path, writeTemp("init.json", initial), pass); err != nil {
+		t.Fatalf("SaveVaultItem: %v", err)
+	}
+
+	// Update only "b" — must locate it via the label index and leave others intact.
+	if err := UpdateVaultItem(path, writeTemp("upd.json", `{"label":"b","category":"email","password":"newb"}`), pass, false); err != nil {
+		t.Fatalf("UpdateVaultItem: %v", err)
+	}
+
+	passwords := func() map[string]string {
+		h, err := loadVault(path, pass)
+		if err != nil {
+			t.Fatalf("loadVault: %v", err)
+		}
+		defer h.Clear()
+		out := make(map[string]string, len(h.BodyBlocks))
+		for _, b := range h.BodyBlocks {
+			item, err := DecryptVaultItem(b, h.MacKey, h.DataKey, h.AlgSuite, b.Seq)
+			if err != nil {
+				t.Fatalf("decrypt seq %d: %v", b.Seq, err)
+			}
+			out[item.Label] = item.Password
+		}
+		return out
+	}
+
+	got := passwords()
+	if got["b"] != "newb" || got["a"] != "p1" || got["c"] != "p3" {
+		t.Errorf("unexpected passwords after selective update: %v", got)
+	}
+
+	// pop must decrypt only the requested block.
+	if err := ExtractVaultItem(path, []string{"c"}, pass); err != nil {
+		t.Fatalf("ExtractVaultItem: %v", err)
+	}
+	data, err := os.ReadFile("email-c.json")
+	if err != nil {
+		t.Fatalf("read exported file: %v", err)
+	}
+	var exported VaultItem
+	if err := json.Unmarshal(data, &exported); err != nil {
+		t.Fatalf("unmarshal exported file: %v", err)
+	}
+	if exported.Label != "c" || exported.Password != "p3" {
+		t.Errorf("exported item = %+v, want label c / password p3", exported)
+	}
+
+	// Delete "a" without decrypting any remaining block.
+	if err := DeleteVaultItem(path, []string{"a"}, pass, false); err != nil {
+		t.Fatalf("DeleteVaultItem: %v", err)
+	}
+	h, err := loadVault(path, pass)
+	if err != nil {
+		t.Fatalf("reload after delete: %v", err)
+	}
+	if h.Header.Count != 2 || len(h.BodyBlocks) != 2 {
+		t.Errorf("after delete: count=%d blocks=%d, want 2/2", h.Header.Count, len(h.BodyBlocks))
+	}
+	if strings.Join(h.Base.Labels, ",") != "b,c" {
+		t.Errorf("labels = %v, want [b c]", h.Base.Labels)
+	}
+	h.Clear()
+
+	if err := ExtractVaultItem(path, []string{"a"}, pass); err == nil {
+		t.Error("expected 'no matching labels' after deleting a")
 	}
 }

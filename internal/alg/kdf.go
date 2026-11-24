@@ -13,13 +13,15 @@ import (
 // KDFParams holds the parameters for a key derivation function.
 //
 // For Argon2id (OWASP 2024 recommended):
-//   M = memory in MB     (≥ 128)
-//   T = time factor      (≥ 3)
-//   P = parallelism      (2 on modern CPUs)
+//
+//	M = memory in MB     (≥ 128)
+//	T = time factor      (≥ 3)
+//	P = parallelism      (2 on modern CPUs)
 //
 // For PBKDF2-HMAC-SHA256:
-//   M = iteration count  (≥ 600_000 per OWASP 2024)
-//   T, P are ignored.
+//
+//	M = iteration count  (≥ 600_000 per OWASP 2024)
+//	T, P are ignored.
 type KDFParams struct {
 	Name string
 	ID   byte
