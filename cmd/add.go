@@ -23,7 +23,7 @@ var addCmd = &cobra.Command{
 to the specified vault (.sv file). The JSON can be a single object or an array.
 
 Example JSON fields per entry:
-  label, account, password, bindEmail, bindPhone, urls, notes, openingAt`,
+  label, account, password, bindEmail, bindPhone, urls, notes, registeredAt`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if addVault == "" {
 			return fmt.Errorf("--vault is required")

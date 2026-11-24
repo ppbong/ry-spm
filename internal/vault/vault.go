@@ -133,7 +133,7 @@ func LoadVaultLite(vaultFile, passphrase string) (*VaultHandle, error) {
 		handle := &VaultHandle{
 			FilePath:  vaultFile,
 			AlgSuite:  suite,
-			KdfParams:  kdfParams,
+			KdfParams: kdfParams,
 			RootKey:   masterRootKey,
 			MacKey:    masterMacKey,
 			InfoKey:   infoKey,
@@ -563,7 +563,7 @@ func ShowVaultItemDetail(vaultFile string, labels []string, passphrase string) e
 		fmt.Printf("BindPhone       : %s\n", item.BindPhone)
 		fmt.Printf("URLs            : %v\n", item.Urls)
 		fmt.Printf("Notes           : %v\n", item.Notes)
-		fmt.Printf("OpeningAt       : %s\n", item.OpeningAt)
+		fmt.Printf("RegisteredAt    : %s\n", item.RegisteredAt)
 		fmt.Printf("CreatedAt       : %s\n", item.CreatedAt)
 		fmt.Printf("UpdatedAt       : %s\n", item.UpdatedAt)
 		if len(item.HistoryPasswords) > 0 {
@@ -636,7 +636,7 @@ func UpdateVaultItem(vaultFile, filename, passphrase string, keepHistory bool) e
 		newItem.BindPhone = strings.TrimSpace(u.BindPhone)
 		newItem.Urls = u.Urls
 		newItem.Notes = u.Notes
-		newItem.OpeningAt = strings.TrimSpace(u.OpeningAt)
+		newItem.RegisteredAt = strings.TrimSpace(u.RegisteredAt)
 		newItem.UpdatedAt = util.NowString()
 
 		if keepHistory && oldPassword != "" && oldPassword != newItem.Password {

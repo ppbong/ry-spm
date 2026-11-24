@@ -4,15 +4,15 @@ import "github.com/ppbong/ry-spm/internal/alg"
 
 // mock item
 type MockItem struct {
-	Label     string   `json:"label"`
-	Category  string   `json:"category"`
-	Account   string   `json:"account"`
-	Password  string   `json:"password"`
-	BindEmail string   `json:"bindEmail"`
-	BindPhone string   `json:"bindPhone"`
-	Urls      []string `json:"urls"`
-	Notes     []string `json:"notes"`
-	OpeningAt string   `json:"openingAt"`
+	Label        string   `json:"label"`
+	Category     string   `json:"category"`
+	Account      string   `json:"account"`
+	Password     string   `json:"password"`
+	BindEmail    string   `json:"bindEmail"`
+	BindPhone    string   `json:"bindPhone"`
+	Urls         []string `json:"urls"`
+	Notes        []string `json:"notes"`
+	RegisteredAt string   `json:"registeredAt"`
 }
 
 // vault item
@@ -26,7 +26,7 @@ type VaultItem struct {
 	BindPhone        string   `json:"bindPhone"`
 	Urls             []string `json:"urls"`
 	Notes            []string `json:"notes"`
-	OpeningAt        string   `json:"openingAt"`
+	RegisteredAt     string   `json:"registeredAt"`
 	CreatedAt        string   `json:"createdAt"`
 	UpdatedAt        string   `json:"updatedAt"`
 }

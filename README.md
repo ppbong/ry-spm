@@ -11,10 +11,9 @@ Manager is intended to help an individual manage credentials for services and re
 The design uses a hierarchy of keys so that each stored item can be encrypted with its own data-encryption key:
 
 1. The user's master passphrase is used to derive a **root key**.
-2. The root key is used to derive a **data key** and **mac key**.
-3. The root key is used to derive a **info key** to protect the meta.
-4. A random **data-encryption key (DEK)** is generated for each item.
-5. The DEK is wrapped (encrypted) with the data key.
+2. The root key is used to derive a **data key** and **mac key** and **info key**.
+3. A random **data-encryption key (DEK)** is generated for each item.
+4. The DEK is wrapped (encrypted) with the data key.
 
 Conceptually, storage contains encrypted item data and the corresponding wrapped DEK. To access an item, the application derives the key hierarchy from the user's passphrase, unwraps the DEK, and decrypts the item.
 

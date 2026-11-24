@@ -508,15 +508,15 @@ func DecryptVaultItem(block VaultBlock, macKey []byte, dataKey []byte, suite alg
 // MockVaultItemJSON generates a template JSON object ready for user filling.
 func MockVaultItemJSON(category string) MockItem {
 	return MockItem{
-		Label:     "example-label",
-		Category:  category,
-		Account:   "user@example.com",
-		Password:  "changeme666",
-		BindEmail: "none",
-		BindPhone: "none",
-		Urls:      []string{"http://example.com"},
-		Notes:     []string{"note 1"},
-		OpeningAt: "2099/12/31",
+		Label:        "example-label",
+		Category:     category,
+		Account:      "user@example.com",
+		Password:     "changeme666",
+		BindEmail:    "none",
+		BindPhone:    "none",
+		Urls:         []string{"http://example.com"},
+		Notes:        []string{"note 1"},
+		RegisteredAt: "2099/12/31",
 	}
 }
 
@@ -533,7 +533,7 @@ func ToVaultItem(m MockItem, category string) VaultItem {
 		BindPhone:        strings.TrimSpace(m.BindPhone),
 		Urls:             m.Urls,
 		Notes:            m.Notes,
-		OpeningAt:        strings.TrimSpace(m.OpeningAt),
+		RegisteredAt:     strings.TrimSpace(m.RegisteredAt),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -542,14 +542,14 @@ func ToVaultItem(m MockItem, category string) VaultItem {
 // FromVaultItemToMock extracts user-editable fields from a VaultItem.
 func FromVaultItemToMock(v VaultItem) MockItem {
 	return MockItem{
-		Label:     v.Label,
-		Category:  v.Category,
-		Account:   v.Account,
-		Password:  v.Password,
-		BindEmail: v.BindEmail,
-		BindPhone: v.BindPhone,
-		Urls:      v.Urls,
-		Notes:     v.Notes,
-		OpeningAt: v.OpeningAt,
+		Label:        v.Label,
+		Category:     v.Category,
+		Account:      v.Account,
+		Password:     v.Password,
+		BindEmail:    v.BindEmail,
+		BindPhone:    v.BindPhone,
+		Urls:         v.Urls,
+		Notes:        v.Notes,
+		RegisteredAt: v.RegisteredAt,
 	}
 }
